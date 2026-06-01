@@ -24,7 +24,7 @@ Plug into run_eval.py:
     from pipeline_recommender import PipelineRecommender
     rec = PipelineRecommender.build(ratings, splits, movies)
 
-Smoke test (needs Ollama running with llama3.1:8b):
+Smoke test (needs Ollama running with llama3.2:3b):
     python pipeline_recommender.py
 """
 
@@ -83,7 +83,7 @@ class PipelineRecommender:
         cf: CFRecommender,
         cbf: CBFRecommender,
         movies: pd.DataFrame,
-        model: str = "llama3.1:8b",
+        model: str = "llama3.2:3b",
         n_per_retriever: int = 50,
         cache_path: str = "processed/rerank_cache.json",
         ollama_url: str = "http://localhost:11434/api/generate",
@@ -109,7 +109,7 @@ class PipelineRecommender:
         ratings: pd.DataFrame,
         splits: pd.DataFrame,
         movies: pd.DataFrame,
-        model: str = "llama3.1:8b",
+        model: str = "llama3.2:3b",
         **kwargs,
     ) -> "PipelineRecommender":
         print("  building CF retriever...")
