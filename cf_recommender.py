@@ -162,7 +162,7 @@ class CFRecommender:
         user_vec = np.linalg.solve(YtCY, YtCp)
         return user_vec.astype(np.float32)
 
-    def recommend(self, query: str, history_ids: list[int], k: int) -> list[int]:
+    def recommend(self, query: str, history_ids: list[int], profile: dict = None, k: int = 20) -> list[int]:
         """
         Return up to k movieIds ranked by inner product with the fold-in user vector.
         Movies in history are excluded.

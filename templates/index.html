@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Movie Recommender</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5;
+           display: flex; justify-content: center; padding: 2rem 1rem; }
+    .container { width: 100%; max-width: 720px; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+    p.sub { color: #666; margin-bottom: 1.5rem; font-size: 0.9rem; }
+
+    section { background: white; border-radius: 12px; padding: 1.25rem;
+              margin-bottom: 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    section h2 { font-size: 1rem; margin-bottom: 0.75rem; color: #333; }
+
+    input[type=text] { width: 100%; padding: 0.6rem 0.8rem; border: 1px solid #ddd;
+                       border-radius: 8px; font-size: 0.95rem; outline: none; }
+    input[type=text]:focus { border-color: #6366f1; }
+
+    .search-results { margin-top: 0.5rem; }
+    .search-item { display: flex; justify-content: space-between; align-items: center;
+                   padding: 0.5rem 0.75rem; border-radius: 8px; cursor: pointer;
+                   font-size: 0.9rem; }
+    .search-item:hover { background: #f0f0ff; }
+    .search-item .add-btn { background: #6366f1; color: white; border: none;
+                            border-radius: 6px; padding: 0.25rem 0.6rem;
+                            font-size: 0.8rem; cursor: pointer; }
+
+    .history-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; min-height: 32px; }
+    .chip { background: #ede9fe; color: #4338ca; border-radius: 999px;
+            padding: 0.25rem 0.75rem; font-size: 0.82rem; display: flex;
+            align-items: center; gap: 0.4rem; }
+    .chip button { background: none; border: none; cursor: pointer;
+                   color: #6366f1; font-size: 1rem; line-height: 1; }
+
+    textarea { width: 100%; padding: 0.6rem 0.8rem; border: 1px solid #ddd;
+               border-radius: 8px; font-size: 0.95rem; resize: vertical;
+               min-height: 80px; outline: none; font-family: inherit; }
+    textarea:focus { border-color: #6366f1; }
+
+    .ask-btn { margin-top: 0.75rem; width: 100%; padding: 0.7rem;
+               background: #6366f1; color: white; border: none;
+               border-radius: 8px; font-size: 1rem; cursor: pointer; }
+    .ask-btn:hover { background: #4f46e5; }
+    .ask-btn:disabled { background: #a5b4fc; cursor: not-allowed; }
+
+    .results-list { display: flex; flex-direction: column; gap: 0.75rem; }
+    .movie-card { border: 1px solid #eee; border-radius: 10px; padding: 0.9rem 1rem; }
+    .movie-card .rank { font-size: 0.75rem; color: #999; margin-bottom: 0.2rem; }
+    .movie-card .title { font-weight: 600; font-size: 1rem; }
+    .movie-card .genres { font-size: 0.8rem; color: #6366f1; margin-top: 0.2rem; }
+    .movie-card .overview { font-size: 0.85rem; color: #555; margin-top: 0.4rem;
+                            line-height: 1.5; }
+    .empty { color: #999; font-size: 0.9rem; text-align: center; padding: 1rem 0; }
+    .spinner { text-align: center; color: #6366f1; padding: 1rem; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Movie Recommender</h1>
+  <p class="sub">Tell us what you're in the mood for and we'll find something great.</p>
+
+  <section>
+    <h2>1. Add movies you've enjoyed</h2>
+    <input type="text" id="search-input" placeholder="Search for a movie title..."
+           oninput="searchMovies(this.value)">
+    <div class="search-results" id="search-results"></div>
+    <div style="margin-top:0.75rem">
+      <div class="history-chips" id="history-chips">
+        <span class="empty">No movies added yet</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Describe what you want to watch</h2>
+    <textarea id="query-input"
+      placeholder="e.g. Something like Inception but lighter, maybe a sci-fi thriller from the last 10 years, nothing too violent"></textarea>
+    <button class="ask-btn" id="ask-btn" onclick="getRecommendations()">
+      Get recommendations
+    </button>
+  </section>
+
+  <section id="results-section" style="display:none">
+    <h2>Recommendations</h2>
+    <div id="results-list" class="results-list"></div>
+  </section>
+</div>
+
+<script>
+  const history = {};   // movieId -> title
+
+  let searchTimeout;
+  function searchMovies(q) {
+    clearTimeout(searchTimeout);
+    if (q.length < 2) { document.getElementById("search-results").innerHTML = ""; return; }
+    searchTimeout = setTimeout(async () => {
+      const res  = await fetch(`/search?q=${encodeURIComponent(q)}`);
+      const hits = await res.json();
+      const el   = document.getElementById("search-results");
+      if (!hits.length) { el.innerHTML = '<div class="empty">No results</div>'; return; }
+      el.innerHTML = hits.map(m =>
+        `<div class="search-item">
+          <span>${m.title}${m.year ? ' (' + m.year + ')' : ''}</span>
+          <button class="add-btn" onclick="addMovie(${m.movieId}, ${JSON.stringify(m.title)})">+ Add</button>
+        </div>`
+      ).join("");
+    }, 250);
+  }
+
+  function addMovie(id, title) {
+    if (history[id]) return;
+    history[id] = title;
+    renderChips();
+    document.getElementById("search-results").innerHTML = "";
+    document.getElementById("search-input").value = "";
+  }
+
+  function removeMovie(id) {
+    delete history[id];
+    renderChips();
+  }
+
+  function renderChips() {
+    const el   = document.getElementById("history-chips");
+    const keys = Object.keys(history);
+    if (!keys.length) { el.innerHTML = '<span class="empty">No movies added yet</span>'; return; }
+    el.innerHTML = keys.map(id =>
+      `<span class="chip">${history[id]}
+        <button onclick="removeMovie(${id})" title="Remove">×</button>
+      </span>`
+    ).join("");
+  }
+
+  async function getRecommendations() {
+    const query = document.getElementById("query-input").value.trim();
+    if (!query) { alert("Please describe what you want to watch."); return; }
+
+    const btn = document.getElementById("ask-btn");
+    btn.disabled = true;
+    btn.textContent = "Thinking...";
+
+    const section = document.getElementById("results-section");
+    const list    = document.getElementById("results-list");
+    section.style.display = "block";
+    list.innerHTML = '<div class="spinner">Finding recommendations...</div>';
+
+    try {
+      const res  = await fetch("/recommend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          history_ids: Object.keys(history).map(Number),
+          k: 10
+        })
+      });
+      const data = await res.json();
+      const recs = data.recommendations;
+      if (!recs.length) { list.innerHTML = '<div class="empty">No results found.</div>'; return; }
+      list.innerHTML = recs.map((m, i) =>
+        `<div class="movie-card">
+          <div class="rank">#${i + 1}</div>
+          <div class="title">${m.title}${m.year ? ' (' + m.year + ')' : ''}</div>
+          <div class="genres">${m.genres.join(" · ")}</div>
+          ${m.overview ? '<div class="overview">' + m.overview + '...</div>' : ''}
+        </div>`
+      ).join("");
+    } catch (e) {
+      list.innerHTML = '<div class="empty">Something went wrong. Is Ollama running?</div>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Get recommendations";
+    }
+  }
+</script>
+</body>
+</html>

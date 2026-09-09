@@ -118,40 +118,40 @@ class CBFRecommender:
     # recommend
     # ---------------------------------------------------------------------- #
     def recommend(self, query: str, history_ids: list[int], k: int) -> list[int]:
-        """
-        Return up to k movieIds ranked by cosine similarity to the user profile.
-
-        User profile = mean TF-IDF vector of their history movies.
-        Movies already in history are excluded from results.
-        """
         seen = set(history_ids)
 
-        # collect history vectors that we actually have in the index
         history_idxs = [self._id2idx[mid] for mid in history_ids if mid in self._id2idx]
+
         if not history_idxs:
-            # cold-start fallback: return highest vote_average movies (caller has no history)
-            unseen_mask = np.array([mid not in seen for mid in self._ids])
-            unseen_ids = self._ids[unseen_mask]
-            return unseen_ids[:k].tolist()
+            if query and query.strip():
+                # cold-start: use the query text itself as the taste profile
+                query_vec = self._vec.transform([query.strip()])
+                sims = cosine_similarity(query_vec, self._mat).flatten()
+                for mid in seen:
+                    idx = self._id2idx.get(mid)
+                    if idx is not None:
+                        sims[idx] = -1.0
+                top_idxs = np.argpartition(sims, -k)[-k:]
+                top_idxs = top_idxs[np.argsort(sims[top_idxs])[::-1]]
+                return self._ids[top_idxs].tolist()
+            else:
+                # no history and no query: fall back to first k movies
+                unseen_mask = np.array([mid not in seen for mid in self._ids])
+                return self._ids[unseen_mask][:k].tolist()
 
-        # mean profile vector (dense, shape (1, vocab))
-        history_mat = self._mat[history_idxs]           # (H, vocab) sparse
-        profile = np.asarray(history_mat.mean(axis=0))  # (1, vocab)
+        history_mat = self._mat[history_idxs]
+        profile = np.asarray(history_mat.mean(axis=0))
 
-        # cosine similarity against full corpus
-        sims = cosine_similarity(profile, self._mat).flatten()  # (N,)
+        sims = cosine_similarity(profile, self._mat).flatten()
 
-        # mask out seen movies
         for mid in seen:
             idx = self._id2idx.get(mid)
             if idx is not None:
                 sims[idx] = -1.0
 
-        # top-k by descending similarity
         top_idxs = np.argpartition(sims, -k)[-k:]
         top_idxs = top_idxs[np.argsort(sims[top_idxs])[::-1]]
         return self._ids[top_idxs].tolist()
-
 
 # --------------------------------------------------------------------------- #
 # smoke test

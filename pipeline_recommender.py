@@ -122,24 +122,123 @@ class PipelineRecommender:
     # public interface (matches Recommender protocol in run_eval.py)
     # ---------------------------------------------------------------------- #
     def recommend(self, query: str, history_ids: list[int], k: int) -> list[int]:
-        candidates = self._retrieve(history_ids)
+        candidates = self._retrieve(history_ids, query=query)
+        candidates = self._filter_candidates(candidates, query)
         return self._rerank(query, candidates, k=k)
 
-    # ---------------------------------------------------------------------- #
-    # stage 1: retrieve + rank fusion
-    # ---------------------------------------------------------------------- #
-    def _retrieve(self, history_ids: list[int]) -> list[int]:
-        cf_top = self.cf.recommend("", history_ids, k=self.n_per_retriever)
-        cbf_top = self.cbf.recommend("", history_ids, k=self.n_per_retriever)
+    def _retrieve(self, history_ids: list[int], query: str = "") -> list[int]:
+        cf_top  = self.cf.recommend("", history_ids, k=self.n_per_retriever)
+        cbf_top = self.cbf.recommend(query, history_ids, k=self.n_per_retriever)
         seen: set[int] = set()
         merged: list[int] = []
-        # interleave-then-dedup preserves each retriever's rank order in the union
         for mid in cf_top + cbf_top:
             if mid not in seen:
                 merged.append(mid)
                 seen.add(mid)
         return merged
 
+    def _filter_candidates(self, candidates: list[int], query: str) -> list[int]:
+        """Apply hard year and genre filters extracted from the query."""
+        import re
+        q = query.lower()
+
+        # --- year range detection ---
+        year_min, year_max = None, None
+
+        # "from the 2000s" / "2000s movies"
+        decade = re.search(r"\b(19|20)(\d0)s\b", q)
+        if decade:
+            year_min = int(decade.group(1) + decade.group(2))
+            year_max = year_min + 9
+
+        # "from the 2000s to 2010s" or "2000s-2010s"
+        decade_range = re.search(r"\b(19|20)(\d0)s.{0,10}(19|20)(\d0)s\b", q)
+        if decade_range:
+            year_min = int(decade_range.group(1) + decade_range.group(2))
+            year_max = int(decade_range.group(3) + decade_range.group(4)) + 9
+
+        # "from 2005" / "after 2005" / "since 2005"
+        after = re.search(r"\b(after|since|from)\s+(19|20)\d{2}\b", q)
+        if after:
+            year_min = int(re.search(r"\d{4}", after.group()).group())
+
+        # "before 2010"
+        before = re.search(r"\bbefore\s+(19|20)\d{2}\b", q)
+        if before:
+            year_max = int(re.search(r"\d{4}", before.group()).group())
+
+        # "recent" / "new" / "modern" -> last 10 years
+        if re.search(r"\b(recent|new|modern|latest)\b", q):
+            year_min = 2015
+
+        # "classic" / "old" / "older" -> before 1990
+        if re.search(r"\b(classic|old|older|vintage|retro)\b", q):
+            year_max = 1990
+
+        # --- genre detection ---
+        genre_map = {
+            "romance":    ["Romance"],
+            "romantic":   ["Romance"],
+            "comedy":     ["Comedy"],
+            "horror":     ["Horror"],
+            "thriller":   ["Thriller"],
+            "action":     ["Action"],
+            "sci-fi":     ["Science Fiction", "Sci-Fi"],
+            "science fiction": ["Science Fiction", "Sci-Fi"],
+            "drama":      ["Drama"],
+            "animation":  ["Animation"],
+            "animated":   ["Animation"],
+            "documentary":["Documentary"],
+            "fantasy":    ["Fantasy"],
+            "mystery":    ["Mystery"],
+            "crime":      ["Crime"],
+            "adventure":  ["Adventure"],
+            "family":     ["Family"],
+        }
+        required_genres = []
+        for keyword, genres in genre_map.items():
+            if keyword in q:
+                required_genres.extend(genres)
+
+        if not year_min and not year_max and not required_genres:
+            return candidates  # no filters detected, return as-is
+
+        filtered = []
+        for mid in candidates:
+            if mid not in self.movies.index:
+                continue
+            row = self.movies.loc[mid]
+
+            # year filter
+            year = row.get("year")
+            if year_min and (pd.isna(year) or int(year) < year_min):
+                continue
+            if year_max and (pd.isna(year) or int(year) > year_max):
+                continue
+
+            # genre filter
+            if required_genres:
+                movie_genres = list(row.get("genres")) if row.get("genres") is not None else []
+                movie_genres_lower = [g.lower() for g in movie_genres]
+                match = any(
+                    rg.lower() in movie_genres_lower
+                    for rg in required_genres
+                )
+                if not match:
+                    continue
+
+            filtered.append(mid)
+
+        # if filtering was too aggressive and left fewer than k candidates,
+        # pad back with unfiltered candidates so the LLM always has something to work with
+        if len(filtered) < 10:
+            for mid in candidates:
+                if mid not in filtered:
+                    filtered.append(mid)
+                if len(filtered) >= 20:
+                    break
+
+        return filtered
     # ---------------------------------------------------------------------- #
     # stage 2: LLM rerank
     # ---------------------------------------------------------------------- #
